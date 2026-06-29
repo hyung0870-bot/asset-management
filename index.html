@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>통합 자산관리 시스템 (모바일 최적화 폼 포함)</title>
+  <title>Antigravity 자산관리 시스템 (Firestore 연동)</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
   
@@ -25,71 +25,146 @@
 <body class="bg-gray-50 min-h-screen text-gray-900">
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script type="text/babel" data-type="module">
+    // Firebase v10 모듈 동적 임포트 (CDN 방식)
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
     const { useState, useMemo, useEffect } = React;
 
-    const initialDatabase = {
-      "2026-06-29": [
-        { id: 1, cat1: '주식', cat2: '국내(KOSPI)', manager: '신한금융투자', principal: 50000000, valuation: 55000000, target: 40, customFields: {} },
-        { id: 2, cat1: '부동산', cat2: '아파트', manager: '본인', principal: 300000000, valuation: 350000000, target: 40, customFields: {} },
-        { id: 3, cat1: '가상화폐', cat2: '해외(XRP)', manager: '바이낸스', principal: 20000000, valuation: 18000000, target: 20, customFields: {} }
-      ],
-      "2026-05-31": [
-        { id: 1, cat1: '주식', cat2: '국내(KOSPI)', manager: '신한금융투자', principal: 50000000, valuation: 52000000, target: 40, customFields: {} },
-        { id: 2, cat1: '부동산', cat2: '아파트', manager: '본인', principal: 300000000, valuation: 340000000, target: 40, customFields: {} },
-        { id: 3, cat1: '가상화폐', cat2: '해외(XRP)', manager: '바이낸스', principal: 20000000, valuation: 15000000, target: 20, customFields: {} }
-      ]
+    // --- [Firebase 초기화] ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyD-RZUtBpYC4DoB5AqTXVfwsWUOP6xE9rQ",
+      authDomain: "asset-management-a4351.firebaseapp.com",
+      databaseURL: "https://asset-management-a4351-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "asset-management-a4351",
+      storageBucket: "asset-management-a4351.firebasestorage.app",
+      messagingSenderId: "982021336876",
+      appId: "1:982021336876:web:badcb14969ea92d2dcc689"
     };
 
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const storeBackend = () => "firestore";
+
+    // --- [메인 App 컴포넌트] ---
     function App() {
-      const [db, setDb] = useState(() => {
-        try {
-          const saved = localStorage.getItem('asset_db');
-          return saved ? JSON.parse(saved) : initialDatabase;
-        } catch (e) {
-          return initialDatabase;
-        }
+      // 데이터베이스 전체 상태 관리 (그래프용)
+      const [dbSnapshots, setDbSnapshots] = useState({});
+      const [dateOptions, setDateOptions] = useState([]);
+      const [isLoading, setIsLoading] = useState(true);
+
+      // 현재 선택된 화면 상태 관리
+      const [selectedDate, setSelectedDate] = useState(() => {
+        const today = new Date();
+        return today.toISOString().split('T')[0];
       });
-      
-      const [selectedDate, setSelectedDate] = useState("2026-06-29");
       const [assets, setAssets] = useState([]);
       const [usdRate, setUsdRate] = useState("");
       const [customColumns, setCustomColumns] = useState([]);
       
+      // 필터링 및 모달 상태 관리
       const [filterCat1, setFilterCat1] = useState([]);
       const [filterCat2, setFilterCat2] = useState([]);
       const [filterManager, setFilterManager] = useState([]);
-
       const [isModalOpen, setIsModalOpen] = useState(false);
       const [editingAsset, setEditingAsset] = useState(null);
       const [hoveredData, setHoveredData] = useState(null);
 
+      // [1] 앱 시작 시 Firestore에서 전체 데이터 로드
       useEffect(() => {
-        if (db[selectedDate]) {
-          setAssets(db[selectedDate]);
-        } else {
-          setAssets([]);
-        }
-      }, [selectedDate, db]);
+        async function fetchAllData() {
+          try {
+            const querySnapshot = await getDocs(collection(db, "snapshots"));
+            const allData = {};
+            let latestDate = selectedDate;
 
-      const saveToDB = () => {
+            querySnapshot.forEach((doc) => {
+              allData[doc.id] = doc.data();
+            });
+
+            setDbSnapshots(allData);
+            
+            const dates = Object.keys(allData).sort().reverse(); // 최신순 정렬
+            if (dates.length > 0) {
+              setDateOptions(dates);
+              // 만약 오늘 날짜 데이터가 없다면 가장 최신 데이터를 보여줌
+              if (!allData[selectedDate]) {
+                latestDate = dates[0];
+                setSelectedDate(latestDate);
+              }
+            } else {
+              setDateOptions([selectedDate]);
+            }
+            
+            // 선택된 날짜의 데이터를 화면에 세팅
+            if (allData[latestDate]) {
+              setAssets(allData[latestDate].assets || []);
+              setUsdRate(allData[latestDate].usdRate || "");
+              setCustomColumns(allData[latestDate].customColumns || []);
+            }
+            setIsLoading(false);
+          } catch (error) {
+            console.error("Firestore 로드 실패:", error);
+            alert("Firestore 데이터를 불러오지 못했습니다. 데이터베이스 보안 규칙(Rules)을 확인하세요.");
+            setIsLoading(false);
+          }
+        }
+        fetchAllData();
+      }, []);
+
+      // [2] 날짜 변경 시 해당 스냅샷으로 화면 전환
+      useEffect(() => {
+        if (!isLoading) {
+          if (dbSnapshots[selectedDate]) {
+            setAssets(dbSnapshots[selectedDate].assets || []);
+            setUsdRate(dbSnapshots[selectedDate].usdRate || "");
+            setCustomColumns(dbSnapshots[selectedDate].customColumns || []);
+          } else {
+            // 새 날짜 선택 시 폼 초기화
+            setAssets([]);
+            setUsdRate("");
+            setCustomColumns([]);
+          }
+        }
+      }, [selectedDate, dbSnapshots, isLoading]);
+
+      // [3] Firestore에 데이터 실시간 백업 (업데이트 및 저장)
+      const saveToFirestore = async () => {
         try {
-          const updatedDb = { ...db, [selectedDate]: assets };
-          setDb(updatedDb);
-          localStorage.setItem('asset_db', JSON.stringify(updatedDb));
-          alert(`${selectedDate} 자산 데이터가 업데이트되었습니다.`);
-        } catch (e) {
-          alert("저장 실패: 브라우저 로컬 스토리지 접근이 차단되었습니다.");
+          const docRef = doc(db, "snapshots", selectedDate);
+          const payload = {
+            assets,
+            usdRate,
+            customColumns,
+            updatedAt: new Date().toISOString()
+          };
+          
+          await setDoc(docRef, payload, { merge: true });
+          
+          // 로컬 상태 동기화 (그래프 즉시 반영)
+          setDbSnapshots(prev => ({ ...prev, [selectedDate]: payload }));
+          if (!dateOptions.includes(selectedDate)) {
+            setDateOptions(prev => [selectedDate, ...prev].sort().reverse());
+          }
+
+          alert(`[Firestore] ${selectedDate} 스냅샷 데이터가 클라우드에 안전하게 백업되었습니다.`);
+        } catch (error) {
+          console.error("Firestore 저장 실패:", error);
+          alert("데이터 저장 실패: 네트워크 오류 또는 Firestore 권한(Rules)이 거부되었습니다.");
         }
       };
 
-      const formatKRW = (num) => `₩${Math.round(num).toLocaleString()}`;
+      // 포맷팅 헬퍼
+      const formatKRW = (num) => `₩${Math.round(num || 0).toLocaleString()}`;
       const formatUSD = (num) => {
         if (!usdRate || usdRate <= 0) return "-";
         return `$${(num / usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       };
-      const formatPercent = (num) => `${num.toFixed(2)}%`;
+      const formatPercent = (num) => `${(num || 0).toFixed(2)}%`;
 
+      // 글로벌 합계
       const globalTotals = useMemo(() => {
         let principal = 0, valuation = 0;
         assets.forEach(a => { principal += Number(a.principal || 0); valuation += Number(a.valuation || 0); });
@@ -98,6 +173,7 @@
         return { principal, valuation, profit, roi };
       }, [assets]);
 
+      // 필터 옵션 추출
       const uniqueOptions = useMemo(() => {
         const cat1s = [...new Set(assets.map(a => a.cat1))].filter(Boolean);
         const cat2s = [...new Set(assets.map(a => a.cat2))].filter(Boolean);
@@ -105,6 +181,7 @@
         return { cat1s, cat2s, managers };
       }, [assets]);
 
+      // 필터링 적용된 요약 합계
       const filteredSummary = useMemo(() => {
         const filtered = assets.filter(a => {
           const matchCat1 = filterCat1.length === 0 || filterCat1.includes(a.cat1);
@@ -119,15 +196,20 @@
         return { sumValuation, ratioOfTotal };
       }, [assets, filterCat1, filterCat2, filterManager, globalTotals]);
 
+      // 이벤트 핸들러 모음
+      const toggleFilter = (list, setList, val) => {
+        if (list.includes(val)) setList(list.filter(item => item !== val));
+        else setList([...list, val]);
+      };
+
       const addColumn = () => {
         const title = prompt("추가할 열 이름을 입력하세요:");
         if (title && !customColumns.includes(title)) setCustomColumns([...customColumns, title]);
       };
 
       const openModal = (asset = null) => {
-        if (asset) {
-          setEditingAsset({ ...asset });
-        } else {
+        if (asset) setEditingAsset({ ...asset });
+        else {
           const newAsset = { id: Date.now(), cat1: '', cat2: '', manager: '', principal: 0, valuation: 0, target: 0, customFields: {} };
           customColumns.forEach(col => { newAsset.customFields[col] = ""; });
           setEditingAsset(newAsset);
@@ -148,15 +230,14 @@
       const saveAssetFromModal = (e) => {
         e.preventDefault();
         const exists = assets.find(a => a.id === editingAsset.id);
-        if (exists) {
-          setAssets(assets.map(a => a.id === editingAsset.id ? editingAsset : a));
-        } else {
-          setAssets([...assets, editingAsset]);
-        }
+        if (exists) setAssets(assets.map(a => a.id === editingAsset.id ? editingAsset : a));
+        else setAssets([...assets, editingAsset]);
+        
         setIsModalOpen(false);
         setEditingAsset(null);
       };
 
+      // 엑셀 내보내기/가져오기 및 이미지 캡처
       const exportToExcel = () => {
         const dataToExport = assets.map(a => {
           const profit = a.valuation - a.principal;
@@ -183,8 +264,7 @@
         reader.onload = (evt) => {
           const bstr = evt.target.result;
           const workbook = XLSX.read(bstr, { type: 'binary' });
-          const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(worksheet);
+          const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
 
           const importedAssets = json.map((row, idx) => {
             const asset = {
@@ -211,54 +291,67 @@
           canvas.toBlob(blob => {
             if (navigator.clipboard && navigator.clipboard.write) {
               const item = new ClipboardItem({ "image/png": blob });
-              navigator.clipboard.write([item]).then(() => alert("이미지 복사 완료!"))
-                .catch(err => alert("복사 실패: 로컬 환경(file://)에서는 지원되지 않을 수 있습니다."));
+              navigator.clipboard.write([item]).then(() => alert("클립보드에 이미지가 복사되었습니다!"))
+                .catch(err => alert("복사 실패 (로컬 보안정책): 브라우저 설정 확인 요망"));
+            } else {
+              // 폴백: 강제 다운로드
+              const link = document.createElement('a');
+              link.download = `자산대시보드_${selectedDate}.png`;
+              link.href = canvas.toDataURL();
+              link.click();
             }
           }, "image/png");
-        }).catch(err => alert("화면 캡처 실패: 로컬 환경 보안 제한입니다."));
+        });
       };
 
-      // [수정된 부분] setList를 명확히 매개변수로 받아 처리합니다.
-      const toggleFilter = (list, setList, val) => {
-        if (list.includes(val)) {
-          setList(list.filter(item => item !== val));
-        } else {
-          setList([...list, val]);
-        }
-      };
+      if (isLoading) {
+        return <div class="flex h-screen items-center justify-center text-teal-700 font-bold text-xl animate-pulse">Firestore 데이터베이스 연결 중...</div>;
+      }
+
+      const backendType = storeBackend();
 
       return (
         <div class="max-w-7xl mx-auto p-3 md:p-6 pb-24" id="dashboard-capture-area">
+          {/* 상단 제어반 (배지 포함) */}
           <div class="bg-white p-4 rounded-xl shadow-sm border mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 class="text-xl md:text-2xl font-bold text-slate-800">Antigravity 자산 제어 센터</h1>
+              <h1 class="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
+                Antigravity 자산 제어 센터
+                <span class="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-mono uppercase shadow-sm tracking-wider">
+                  {backendType} Connected
+                </span>
+              </h1>
               <p class="text-xs text-gray-500 mt-1">PC 와이드 테이블 & 모바일 슬라이드 폼 하이브리드 모드</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
               <div class="flex items-center gap-1">
                 <label class="text-xs font-bold text-gray-600">기준일자</label>
-                <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} class="border rounded-lg p-2 text-sm bg-gray-50 font-medium">
-                  <option value="2026-06-29">2026-06-29 (최신)</option>
-                  <option value="2026-05-31">2026-05-31 (과거)</option>
-                </select>
+                <input 
+                  type="date" 
+                  value={selectedDate} 
+                  onChange={(e) => setSelectedDate(e.target.value)} 
+                  class="border rounded-lg p-2 text-sm bg-gray-50 font-medium w-36 cursor-pointer outline-none focus:ring-2 focus:ring-teal-500" 
+                />
               </div>
               <div class="flex items-center gap-1">
                 <label class="text-xs font-bold text-gray-600">달러환율(₩)</label>
-                <input type="number" placeholder="예: 1350" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} class="w-24 border rounded-lg p-2 text-sm text-right bg-gray-50" />
+                <input type="number" placeholder="예: 1350" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} class="w-24 border rounded-lg p-2 text-sm text-right bg-gray-50 outline-none focus:ring-2 focus:ring-teal-500" />
               </div>
-              <button onClick={saveToDB} class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-bold hover:bg-blue-700">업데이트 및 저장</button>
+              <button onClick={saveToFirestore} class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 transition-colors">
+                클라우드 업데이트 및 저장
+              </button>
             </div>
           </div>
 
+          {/* 대시보드 (필터링 및 도구) */}
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div class="bg-white p-4 rounded-xl shadow-sm border lg:col-span-2">
               <h3 class="text-sm font-bold text-gray-700 mb-3">🧩 조건별 자산 다중 필터 요약</h3>
               <div class="grid grid-cols-3 gap-2 mb-4 text-xs">
-                {/* [수정된 부분] toggleFilter 호출 시 두 번째 인자를 올바른 setter 함수로 교체했습니다. */}
                 <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
                   <p class="font-bold border-b pb-1 mb-1 text-teal-700">자산구분1</p>
                   {uniqueOptions.cat1s.map(c => (
-                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer">
+                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer hover:bg-gray-50 rounded">
                       <input type="checkbox" checked={filterCat1.includes(c)} onChange={() => toggleFilter(filterCat1, setFilterCat1, c)} /> {c}
                     </label>
                   ))}
@@ -266,7 +359,7 @@
                 <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
                   <p class="font-bold border-b pb-1 mb-1 text-teal-700">자산구분2</p>
                   {uniqueOptions.cat2s.map(c => (
-                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer">
+                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer hover:bg-gray-50 rounded">
                       <input type="checkbox" checked={filterCat2.includes(c)} onChange={() => toggleFilter(filterCat2, setFilterCat2, c)} /> {c}
                     </label>
                   ))}
@@ -274,14 +367,14 @@
                 <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
                   <p class="font-bold border-b pb-1 mb-1 text-teal-700">관리주관</p>
                   {uniqueOptions.managers.map(m => (
-                    <label key={m} class="flex items-center gap-1 my-1 cursor-pointer">
+                    <label key={m} class="flex items-center gap-1 my-1 cursor-pointer hover:bg-gray-50 rounded">
                       <input type="checkbox" checked={filterManager.includes(m)} onChange={() => toggleFilter(filterManager, setFilterManager, m)} /> {m}
                     </label>
                   ))}
                 </div>
               </div>
-              <div class="bg-teal-50 p-3 rounded-lg flex justify-between items-center text-sm">
-                <div><span class="text-xs text-teal-700 font-bold bg-teal-100 px-2 py-0.5 rounded mr-2">선택 조건 합계</span><span class="font-bold text-slate-800">{formatKRW(filteredSummary.sumValuation)}</span></div>
+              <div class="bg-teal-50 p-3 rounded-lg flex justify-between items-center text-sm border border-teal-100">
+                <div><span class="text-xs text-teal-800 font-bold bg-teal-200 px-2 py-0.5 rounded mr-2 shadow-sm">조건 합계</span><span class="font-bold text-slate-800">{formatKRW(filteredSummary.sumValuation)}</span></div>
                 <div class="text-right"><span class="text-xs text-gray-500">전체 대비 비중: </span><span class="font-bold text-teal-700">{formatPercent(filteredSummary.ratioOfTotal)}</span></div>
               </div>
             </div>
@@ -290,61 +383,66 @@
               <div>
                 <h3 class="text-sm font-bold text-gray-700 mb-2">💾 외부 연동 및 출력</h3>
                 <div class="grid grid-cols-2 gap-2">
-                  <button onClick={exportToExcel} class="bg-emerald-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-emerald-700">📊 엑셀 내보내기</button>
-                  <label class="bg-amber-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-amber-700 flex items-center justify-center gap-1 cursor-pointer text-center">📥 엑셀 업로드<input type="file" accept=".xlsx, .xls" onChange={importExcel} class="hidden" /></label>
+                  <button onClick={exportToExcel} class="bg-emerald-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-sm transition-colors">📊 엑셀 내보내기</button>
+                  <label class="bg-amber-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-amber-700 flex items-center justify-center gap-1 cursor-pointer text-center shadow-sm transition-colors">📥 엑셀 업로드<input type="file" accept=".xlsx, .xls" onChange={importExcel} class="hidden" /></label>
                 </div>
               </div>
-              <button onClick={copyDashboardImage} class="w-full bg-indigo-600 text-white p-3 rounded-lg text-sm font-bold hover:bg-indigo-700 mt-2">📱 핸드폰 전송용 이미지 클립보드 복사</button>
+              <button onClick={copyDashboardImage} class="w-full bg-indigo-600 text-white p-3 rounded-lg text-sm font-bold shadow-sm hover:bg-indigo-700 mt-2 transition-colors">📱 캡처 후 클립보드 복사</button>
             </div>
           </div>
 
+          {/* 자산 성장 추이 (Firestore 전체 데이터 기반) */}
           <div class="bg-white p-4 rounded-xl shadow-sm border mb-6">
-            <h3 class="text-sm font-bold text-gray-700 mb-3">📈 자산 성장 추이 (원금 vs 평가액)</h3>
-            <div class="relative w-full h-48 bg-gray-50 rounded-lg p-2 flex items-end justify-around pt-6">
-              {Object.keys(db).sort().map(date => {
-                const dayAssets = db[date] || [];
+            <h3 class="text-sm font-bold text-gray-700 mb-3">📈 자산 성장 추이 (Firestore 실시간 집계)</h3>
+            <div class="relative w-full h-48 bg-slate-50 rounded-lg p-2 flex items-end justify-around pt-6 border border-slate-100 overflow-x-auto hide-scrollbar">
+              {Object.keys(dbSnapshots).sort().map(date => {
+                const dayAssets = dbSnapshots[date].assets || [];
                 let pSum = 0, vSum = 0;
-                dayAssets.forEach(a => { pSum += a.principal; vSum += a.valuation; });
-                const maxScale = 500000000;
+                dayAssets.forEach(a => { pSum += Number(a.principal || 0); vSum += Number(a.valuation || 0); });
+                
+                // 데이터 비율을 위한 동적 최대 스케일 계산 (기본 1억 세팅)
+                const maxScale = Math.max(500000000, pSum, vSum) * 1.1;
                 const pHeight = Math.min(100, (pSum / maxScale) * 100);
                 const vHeight = Math.min(100, (vSum / maxScale) * 100);
 
                 return (
-                  <div key={date} class="flex flex-col items-center w-1/3 group cursor-pointer" onMouseEnter={() => setHoveredData({ date, pSum, vSum })} onMouseLeave={() => setHoveredData(null)}>
-                    <div class="flex items-end gap-2 w-full justify-center h-32 border-b pb-1">
-                      <div style={{ height: `${pHeight}%` }} class="w-4 bg-slate-400 rounded-t transition-all group-hover:bg-slate-500"></div>
-                      <div style={{ height: `${vHeight}%` }} class="w-4 bg-teal-500 rounded-t transition-all group-hover:bg-teal-600"></div>
+                  <div key={date} class="flex flex-col items-center flex-shrink-0 w-24 group cursor-pointer" onMouseEnter={() => setHoveredData({ date, pSum, vSum })} onMouseLeave={() => setHoveredData(null)}>
+                    <div class="flex items-end gap-1.5 w-full justify-center h-32 border-b border-gray-200 pb-1">
+                      <div style={{ height: `${pHeight}%` }} class="w-3.5 bg-slate-400 rounded-t-sm transition-all group-hover:bg-slate-600"></div>
+                      <div style={{ height: `${vHeight}%` }} class="w-3.5 bg-teal-500 rounded-t-sm transition-all group-hover:bg-teal-600 shadow-sm"></div>
                     </div>
-                    <span class="text-xs font-medium text-gray-500 mt-1">{date.slice(5)}</span>
+                    <span class="text-[10px] font-medium text-gray-500 mt-1.5">{date.slice(5)}</span>
                   </div>
                 );
               })}
               {hoveredData && (
-                <div class="absolute top-2 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-xs p-2 rounded shadow-lg z-10 space-y-0.5">
-                  <p class="font-bold border-b border-gray-600 pb-0.5 mb-1">{hoveredData.date}</p>
-                  <p>총 원금: {formatKRW(hoveredData.pSum)}</p>
-                  <p class="text-teal-300">총 평가액: {formatKRW(hoveredData.vSum)}</p>
+                <div class="absolute top-2 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-xs p-2.5 rounded-lg shadow-lg z-10 space-y-1">
+                  <p class="font-bold border-b border-gray-600 pb-1 mb-1.5 text-center">{hoveredData.date}</p>
+                  <p class="flex justify-between gap-4"><span class="text-gray-400">총 원금:</span> <span>{formatKRW(hoveredData.pSum)}</span></p>
+                  <p class="flex justify-between gap-4"><span class="text-teal-400">총 평가액:</span> <span class="font-bold">{formatKRW(hoveredData.vSum)}</span></p>
                 </div>
               )}
             </div>
           </div>
 
+          {/* 메인 데이터 테이블/리스트 영역 */}
           <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
             <div class="p-4 border-b flex justify-between items-center bg-gray-50">
               <h3 class="font-bold text-gray-700 text-sm">📋 실시간 종합 자산 시트</h3>
-              <button onClick={addColumn} class="bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-800">+ 열 추가</button>
+              <button onClick={addColumn} class="bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow hover:bg-slate-800 transition-colors">+ 추가 열 삽입</button>
             </div>
 
+            {/* 데스크톱 환경 와이드 테이블 */}
             <div class="hidden lg:block overflow-x-auto">
               <table class="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr class="bg-slate-100 border-b text-gray-600 font-semibold">
+                  <tr class="bg-slate-100 border-b text-slate-700 font-semibold whitespace-nowrap">
                     <th class="p-3">자산구분1</th><th class="p-3">자산구분2</th><th class="p-3">관리주관</th>
                     <th class="p-3 text-right">원금 (₩)</th>{usdRate > 0 && <th class="p-3 text-right bg-amber-50">원금 ($)</th>}
                     <th class="p-3 text-right">평가액 (₩)</th>{usdRate > 0 && <th class="p-3 text-right bg-amber-50">평가액 ($)</th>}
                     <th class="p-3 text-right">수익금</th><th class="p-3 text-right">수익률</th>
                     <th class="p-3 text-right">현재비중</th><th class="p-3 text-right text-teal-700">목표비중</th>
-                    <th class="p-3 text-right text-indigo-700">리밸런싱금액</th>
+                    <th class="p-3 text-right text-indigo-700">리밸런싱 매매금액</th>
                     {customColumns.map(col => <th key={col} class="p-3 text-gray-500">{col}</th>)}
                   </tr>
                 </thead>
@@ -353,18 +451,17 @@
                     const profit = a.valuation - a.principal;
                     const roi = a.principal > 0 ? (profit / a.principal) * 100 : 0;
                     const ratio = globalTotals.valuation > 0 ? (a.valuation / globalTotals.valuation) * 100 : 0;
-                    const targetValuation = globalTotals.valuation * (a.target / 100);
-                    const rebalanceAmount = targetValuation - a.valuation;
+                    const rebalanceAmount = (globalTotals.valuation * (a.target / 100)) - a.valuation;
 
                     return (
-                      <tr key={a.id} class="border-b hover:bg-slate-50 cursor-pointer" onClick={() => openModal(a)}>
-                        <td class="p-3 font-medium">{a.cat1}</td><td class="p-3 text-gray-600">{a.cat2}</td><td class="p-3 text-gray-600">{a.manager}</td>
-                        <td class="p-3 text-right font-mono">{formatKRW(a.principal)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/50 text-amber-800">{formatUSD(a.principal)}</td>}
-                        <td class="p-3 text-right font-bold font-mono">{formatKRW(a.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/50 text-amber-800">{formatUSD(a.valuation)}</td>}
-                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-red-600'}`}>{formatKRW(profit)}</td>
-                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-red-600'}`}>{formatPercent(roi)}</td>
+                      <tr key={a.id} class="border-b hover:bg-teal-50/50 cursor-pointer transition-colors" onClick={() => openModal(a)}>
+                        <td class="p-3 font-medium text-slate-800">{a.cat1}</td><td class="p-3 text-gray-600">{a.cat2}</td><td class="p-3 text-gray-600">{a.manager}</td>
+                        <td class="p-3 text-right font-mono text-slate-700">{formatKRW(a.principal)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/30 text-amber-800">{formatUSD(a.principal)}</td>}
+                        <td class="p-3 text-right font-bold font-mono text-slate-900">{formatKRW(a.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/30 text-amber-800">{formatUSD(a.valuation)}</td>}
+                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatKRW(profit)}</td>
+                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatPercent(roi)}</td>
                         <td class="p-3 text-right font-mono text-gray-500">{formatPercent(ratio)}</td>
-                        <td class="p-3 text-right font-mono font-bold text-teal-600">{a.target}%</td>
+                        <td class="p-3 text-right font-mono font-bold text-teal-600 bg-teal-50/30">{a.target || 0}%</td>
                         <td class={`p-3 text-right font-mono font-bold ${rebalanceAmount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {rebalanceAmount >= 0 ? `+${formatKRW(rebalanceAmount)}` : formatKRW(rebalanceAmount)}
                         </td>
@@ -374,85 +471,137 @@
                   })}
                 </tbody>
                 <tfoot>
-                  <tr class="bg-slate-800 text-white font-bold">
-                    <td class="p-3" colSpan="3">합계</td>
+                  <tr class="bg-slate-800 text-white font-bold whitespace-nowrap">
+                    <td class="p-3" colSpan="3">전체 자산 합계</td>
                     <td class="p-3 text-right font-mono">{formatKRW(globalTotals.principal)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono text-amber-300">{formatUSD(globalTotals.principal)}</td>}
-                    <td class="p-3 text-right font-mono">{formatKRW(globalTotals.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono text-amber-300">{formatUSD(globalTotals.valuation)}</td>}
-                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-red-300'}`}>{formatKRW(globalTotals.profit)}</td>
-                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-red-300'}`}>{formatPercent(globalTotals.roi)}</td>
+                    <td class="p-3 text-right font-mono text-teal-300">{formatKRW(globalTotals.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono text-amber-300">{formatUSD(globalTotals.valuation)}</td>}
+                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-rose-300'}`}>{formatKRW(globalTotals.profit)}</td>
+                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-rose-300'}`}>{formatPercent(globalTotals.roi)}</td>
                     <td class="p-3 text-right font-mono">100%</td>
-                    <td class="p-3 text-right font-mono">{assets.reduce((sum, a) => sum + Number(a.target || 0), 0)}%</td><td class="p-3"></td>
+                    <td class="p-3 text-right font-mono bg-slate-700 text-teal-300">{assets.reduce((sum, a) => sum + Number(a.target || 0), 0)}%</td><td class="p-3"></td>
                     {customColumns.map(col => <td key={col}></td>)}
                   </tr>
                 </tfoot>
               </table>
             </div>
 
+            {/* 모바일 최적화 세로형 리스트 뷰 */}
             <div class="lg:hidden divide-y divide-gray-100">
               {assets.map(a => {
                 const profit = a.valuation - a.principal;
                 return (
-                  <div key={a.id} class="p-4 active:bg-gray-50 flex justify-between items-center transition-colors cursor-pointer" onClick={() => openModal(a)}>
+                  <div key={a.id} class="p-4 hover:bg-gray-50 active:bg-gray-100 flex justify-between items-center transition-colors cursor-pointer" onClick={() => openModal(a)}>
                     <div>
-                      <div class="flex items-center gap-2"><span class="font-bold text-slate-800 text-base">{a.cat1}</span><span class="text-xs bg-slate-100 text-gray-600 px-2 py-0.5 rounded">{a.cat2}</span></div>
-                      <p class="text-xs text-gray-400 mt-1">{a.manager} | 목표: {a.target}%</p>
+                      <div class="flex items-center gap-2"><span class="font-bold text-slate-800 text-base">{a.cat1}</span><span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-wide">{a.cat2 || '미지정'}</span></div>
+                      <p class="text-xs text-gray-400 mt-1.5">{a.manager || '관리처 없음'} | T. {a.target || 0}%</p>
                     </div>
                     <div class="text-right">
-                      <p class="font-bold text-slate-900">{formatKRW(a.valuation)}</p>
-                      <p class={`text-xs font-medium mt-0.5 ${profit < 0 ? 'text-blue-500' : 'text-red-500'}`}>{profit >= 0 ? "+" : ""}{formatPercent(a.principal > 0 ? (profit / a.principal) * 100 : 0)}</p>
+                      <p class="font-bold text-slate-900 font-mono text-lg">{formatKRW(a.valuation)}</p>
+                      <p class={`text-xs font-bold mt-0.5 ${profit < 0 ? 'text-blue-500' : 'text-rose-500'}`}>{profit >= 0 ? "+" : ""}{formatPercent(a.principal > 0 ? (profit / a.principal) * 100 : 0)}</p>
                     </div>
                   </div>
                 );
               })}
-              <div class="bg-slate-900 text-white p-4 sticky bottom-0 text-sm font-bold flex justify-between">
-                <span>총 평가액</span><span class="text-teal-400">{formatKRW(globalTotals.valuation)}</span>
+              {/* 모바일 전용 하단 플로팅 합계 */}
+              <div class="bg-slate-900 text-white p-4 sticky bottom-0 text-sm font-bold flex justify-between items-center shadow-lg">
+                <span class="text-slate-300">총 평가액</span>
+                <span class="text-teal-400 font-mono text-lg">{formatKRW(globalTotals.valuation)}</span>
               </div>
             </div>
           </div>
 
           <div class="mt-4 flex justify-end">
-            <button onClick={() => openModal()} class="w-full lg:w-auto bg-teal-600 text-white font-bold px-6 py-4 lg:py-2.5 rounded-xl lg:rounded-lg shadow hover:bg-teal-700 transition-colors">+ 새 자산 추가 등록</button>
+            <button onClick={() => openModal()} class="w-full lg:w-auto bg-teal-600 text-white font-bold px-6 py-4 lg:py-2.5 rounded-xl lg:rounded-lg shadow hover:bg-teal-700 transition-colors text-center">
+              + 새 자산 추가 등록
+            </button>
           </div>
 
+          {/* 모바일-퍼스트 입력 모달(Modal) 창 */}
           {isModalOpen && editingAsset && (
-            <div class="fixed inset-0 z-50 flex items-end lg:items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity">
-              <div class="bg-white w-full lg:w-[480px] rounded-t-2xl lg:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-slide-up">
-                <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+            <div class="fixed inset-0 z-[100] flex items-end lg:items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity p-0 lg:p-4">
+              <div class="bg-white w-full lg:w-[500px] rounded-t-3xl lg:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-slide-up">
+                <div class="p-4 md:p-5 border-b bg-slate-50 flex justify-between items-center sticky top-0 z-10">
                   <div>
-                    <h2 class="text-lg font-bold text-slate-800">{assets.some(a => a.id === editingAsset.id) ? "자산 상세 정보 편집" : "새로운 자산 추가"}</h2>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                      {assets.some(a => a.id === editingAsset.id) ? "자산 상세 편집" : "새 자산 추가"}
+                      <span class="bg-teal-100 text-teal-800 text-[10px] px-2 py-0.5 rounded-full font-bold">Auto Calc</span>
+                    </h2>
                   </div>
-                  <button onClick={() => setIsModalOpen(false)} class="text-gray-400 hover:text-gray-600 p-2 text-2xl font-mono">&times;</button>
+                  <button onClick={() => setIsModalOpen(false)} class="text-gray-400 hover:text-gray-800 p-2 text-2xl font-mono leading-none">&times;</button>
                 </div>
-                <form onSubmit={saveAssetFromModal} class="p-5 overflow-y-auto space-y-4 flex-1 text-sm hide-scrollbar">
+                
+                <form onSubmit={saveAssetFromModal} class="p-5 overflow-y-auto space-y-4 flex-1 text-sm hide-scrollbar bg-white">
                   <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-xs font-bold text-gray-500 mb-1">자산구분1 *</label><input required type="text" name="cat1" value={editingAsset.cat1} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
-                    <div><label class="block text-xs font-bold text-gray-500 mb-1">자산구분2</label><input type="text" name="cat2" value={editingAsset.cat2} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
+                    <div>
+                      <label class="block text-xs font-bold text-slate-500 mb-1.5">자산구분1 *</label>
+                      <input required type="text" name="cat1" value={editingAsset.cat1} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none transition-all" placeholder="주식, 부동산" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold text-slate-500 mb-1.5">자산구분2</label>
+                      <input type="text" name="cat2" value={editingAsset.cat2} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none transition-all" placeholder="국내, XRP" />
+                    </div>
                   </div>
-                  <div><label class="block text-xs font-bold text-gray-500 mb-1">관리주관</label><input type="text" name="manager" value={editingAsset.manager} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div><label class="block text-xs font-bold text-gray-500 mb-1">원금 (₩) *</label><input required type="number" name="principal" value={editingAsset.principal || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" /></div>
-                    <div><label class="block text-xs font-bold text-gray-500 mb-1">현재 평가액 (₩) *</label><input required type="number" name="valuation" value={editingAsset.valuation || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" /></div>
+                  <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">관리주관 (증권사/거래소)</label>
+                    <input type="text" name="manager" value={editingAsset.manager} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none transition-all" placeholder="신한투자증권" />
                   </div>
-                  <div><label class="block text-xs font-bold text-gray-500 mb-1">목표 비율 (Target %)</label><input type="number" max="100" name="target" value={editingAsset.target || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" placeholder="0" /></div>
                   
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-bold text-slate-500 mb-1.5">매입 원금 (₩) *</label>
+                      <input required type="number" name="principal" value={editingAsset.principal || ""} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 font-mono text-right text-base focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold text-slate-500 mb-1.5">현재 평가액 (₩) *</label>
+                      <input required type="number" name="valuation" value={editingAsset.valuation || ""} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-teal-50/30 font-mono text-right text-base focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none font-bold text-teal-900" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">포트폴리오 목표 비중 (%)</label>
+                    <input type="number" max="100" name="target" value={editingAsset.target || ""} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 font-mono text-right focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none" placeholder="0" />
+                  </div>
+                  
+                  {/* 동적 커스텀 열 */}
                   {customColumns.length > 0 && (
-                    <div class="border-t pt-3 space-y-3">
-                      <p class="text-xs font-bold text-slate-400">추가 확장 열 항목</p>
+                    <div class="border-t border-dashed pt-4 space-y-3 mt-2">
+                      <p class="text-xs font-bold text-indigo-400">사용자 정의 추가 필드</p>
                       {customColumns.map(col => (
-                        <div key={col}><label class="block text-xs font-bold text-gray-600 mb-1">{col}</label><input type="text" name={`custom_${col}`} value={editingAsset.customFields?.[col] || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 outline-none" /></div>
+                        <div key={col}>
+                          <label class="block text-xs font-bold text-slate-500 mb-1.5">{col}</label>
+                          <input type="text" name={`custom_${col}`} value={editingAsset.customFields?.[col] || ""} onChange={handleModalChange} class="w-full border border-gray-200 rounded-xl p-3 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                        </div>
                       ))}
                     </div>
                   )}
 
-                  <div class="bg-slate-50 border rounded-xl p-4 space-y-2.5 font-medium text-xs text-gray-600">
-                    <p class="text-xs font-bold text-slate-400 border-b pb-1 mb-2">📊 수치 계산 분석기</p>
-                    <div class="flex justify-between"><span>수익금/률</span><span class={`font-bold font-mono ${(editingAsset.valuation - editingAsset.principal) >= 0 ? 'text-red-600' : 'text-blue-600'}`}>{formatKRW(editingAsset.valuation - editingAsset.principal)} ({editingAsset.principal > 0 ? (((editingAsset.valuation - editingAsset.principal) / editingAsset.principal) * 100).toFixed(2) : 0}%)</span></div>
-                    <div class="flex justify-between border-t pt-2 mt-2"><span>리밸런싱 필요액</span><span class={`font-bold font-mono ${(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? "+" : ""}{formatKRW(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation)}</span></div>
+                  {/* 실시간 계산 요약 위젯 */}
+                  <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 font-medium text-xs text-slate-600 mt-4 shadow-inner">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b pb-1.5 mb-2">Real-time Analytics</p>
+                    <div class="flex justify-between items-center">
+                      <span>수익금 & 수익률</span>
+                      <span class={`font-bold font-mono text-sm ${(editingAsset.valuation - editingAsset.principal) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
+                        {formatKRW(editingAsset.valuation - editingAsset.principal)} <span class="text-xs opacity-70">({editingAsset.principal > 0 ? (((editingAsset.valuation - editingAsset.principal) / editingAsset.principal) * 100).toFixed(2) : 0}%)</span>
+                      </span>
+                    </div>
+                    {usdRate > 0 && (
+                      <div class="flex justify-between items-center bg-amber-100/50 p-2 rounded-lg text-amber-900 mt-1">
+                        <span>달러 환산 평가액</span>
+                        <span class="font-bold font-mono">{formatUSD(editingAsset.valuation)}</span>
+                      </div>
+                    )}
+                    <div class="flex justify-between items-center border-t border-slate-200 pt-3 mt-1 text-slate-800">
+                      <span>목표(Target) 매매 필요액</span>
+                      <span class={`font-bold font-mono text-sm px-2 py-1 rounded bg-white border ${(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? 'text-emerald-600 border-emerald-100' : 'text-rose-600 border-rose-100'}`}>
+                        {(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? "+" : ""}
+                        {formatKRW(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation)}
+                      </span>
+                    </div>
                   </div>
 
-                  <div class="pt-2">
-                    <button type="submit" class="w-full bg-teal-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-teal-700 active:bg-teal-800 transition-colors text-base">업데이트 및 저장</button>
-                    <button type="button" onClick={() => setIsModalOpen(false)} class="w-full text-gray-500 font-medium py-2.5 mt-1 text-center text-xs">입력 취소하고 돌아가기</button>
+                  <div class="pt-4 pb-2 sticky bottom-0 bg-white">
+                    <button type="submit" class="w-full bg-teal-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-teal-700 active:bg-teal-800 transition-colors text-base">내역 적용하기</button>
+                    <button type="button" onClick={() => setIsModalOpen(false)} class="w-full text-slate-400 font-bold py-3 mt-2 text-center text-xs hover:text-slate-600 transition-colors">취소</button>
                   </div>
                 </form>
               </div>
@@ -461,12 +610,13 @@
         </div>
       );
     }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
   <style>
-    @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-    .animate-slide-up { animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    @keyframes slide-up { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .animate-slide-up { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
   </style>
 </body>
 </html>
