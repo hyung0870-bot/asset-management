@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>통합 자산관리 시스템 (모바일 최적화 폼 포함)</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+  <style>
+    body { -webkit-font-smoothing: antialiased; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect } = React;
+
+    const initialDatabase = {
+      "2026-06-29": [
+        { id: 1, cat1: '주식', cat2: '국내(KOSPI)', manager: '신한금융투자', principal: 50000000, valuation: 55000000, target: 40, customFields: {} },
+        { id: 2, cat1: '부동산', cat2: '아파트', manager: '본인', principal: 300000000, valuation: 350000000, target: 40, customFields: {} },
+        { id: 3, cat1: '가상화폐', cat2: '해외(XRP)', manager: '바이낸스', principal: 20000000, valuation: 18000000, target: 20, customFields: {} }
+      ],
+      "2026-05-31": [
+        { id: 1, cat1: '주식', cat2: '국내(KOSPI)', manager: '신한금융투자', principal: 50000000, valuation: 52000000, target: 40, customFields: {} },
+        { id: 2, cat1: '부동산', cat2: '아파트', manager: '본인', principal: 300000000, valuation: 340000000, target: 40, customFields: {} },
+        { id: 3, cat1: '가상화폐', cat2: '해외(XRP)', manager: '바이낸스', principal: 20000000, valuation: 15000000, target: 20, customFields: {} }
+      ]
+    };
+
+    function App() {
+      const [db, setDb] = useState(() => {
+        try {
+          const saved = localStorage.getItem('asset_db');
+          return saved ? JSON.parse(saved) : initialDatabase;
+        } catch (e) {
+          return initialDatabase;
+        }
+      });
+      
+      const [selectedDate, setSelectedDate] = useState("2026-06-29");
+      const [assets, setAssets] = useState([]);
+      const [usdRate, setUsdRate] = useState("");
+      const [customColumns, setCustomColumns] = useState([]);
+      
+      const [filterCat1, setFilterCat1] = useState([]);
+      const [filterCat2, setFilterCat2] = useState([]);
+      const [filterManager, setFilterManager] = useState([]);
+
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [editingAsset, setEditingAsset] = useState(null);
+      const [hoveredData, setHoveredData] = useState(null);
+
+      useEffect(() => {
+        if (db[selectedDate]) {
+          setAssets(db[selectedDate]);
+        } else {
+          setAssets([]);
+        }
+      }, [selectedDate, db]);
+
+      const saveToDB = () => {
+        try {
+          const updatedDb = { ...db, [selectedDate]: assets };
+          setDb(updatedDb);
+          localStorage.setItem('asset_db', JSON.stringify(updatedDb));
+          alert(`${selectedDate} 자산 데이터가 업데이트되었습니다.`);
+        } catch (e) {
+          alert("저장 실패: 브라우저 로컬 스토리지 접근이 차단되었습니다.");
+        }
+      };
+
+      const formatKRW = (num) => `₩${Math.round(num).toLocaleString()}`;
+      const formatUSD = (num) => {
+        if (!usdRate || usdRate <= 0) return "-";
+        return `$${(num / usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      };
+      const formatPercent = (num) => `${num.toFixed(2)}%`;
+
+      const globalTotals = useMemo(() => {
+        let principal = 0, valuation = 0;
+        assets.forEach(a => { principal += Number(a.principal || 0); valuation += Number(a.valuation || 0); });
+        const profit = valuation - principal;
+        const roi = principal > 0 ? (profit / principal) * 100 : 0;
+        return { principal, valuation, profit, roi };
+      }, [assets]);
+
+      const uniqueOptions = useMemo(() => {
+        const cat1s = [...new Set(assets.map(a => a.cat1))].filter(Boolean);
+        const cat2s = [...new Set(assets.map(a => a.cat2))].filter(Boolean);
+        const managers = [...new Set(assets.map(a => a.manager))].filter(Boolean);
+        return { cat1s, cat2s, managers };
+      }, [assets]);
+
+      const filteredSummary = useMemo(() => {
+        const filtered = assets.filter(a => {
+          const matchCat1 = filterCat1.length === 0 || filterCat1.includes(a.cat1);
+          const matchCat2 = filterCat2.length === 0 || filterCat2.includes(a.cat2);
+          const matchManager = filterManager.length === 0 || filterManager.includes(a.manager);
+          return matchCat1 && matchCat2 && matchManager;
+        });
+
+        let sumValuation = 0;
+        filtered.forEach(a => { sumValuation += Number(a.valuation || 0); });
+        const ratioOfTotal = globalTotals.valuation > 0 ? (sumValuation / globalTotals.valuation) * 100 : 0;
+        return { sumValuation, ratioOfTotal };
+      }, [assets, filterCat1, filterCat2, filterManager, globalTotals]);
+
+      const addColumn = () => {
+        const title = prompt("추가할 열 이름을 입력하세요:");
+        if (title && !customColumns.includes(title)) setCustomColumns([...customColumns, title]);
+      };
+
+      const openModal = (asset = null) => {
+        if (asset) {
+          setEditingAsset({ ...asset });
+        } else {
+          const newAsset = { id: Date.now(), cat1: '', cat2: '', manager: '', principal: 0, valuation: 0, target: 0, customFields: {} };
+          customColumns.forEach(col => { newAsset.customFields[col] = ""; });
+          setEditingAsset(newAsset);
+        }
+        setIsModalOpen(true);
+      };
+
+      const handleModalChange = (e) => {
+        const { name, value } = e.target;
+        if (name.startsWith("custom_")) {
+          const fieldName = name.replace("custom_", "");
+          setEditingAsset(prev => ({ ...prev, customFields: { ...prev.customFields, [fieldName]: value } }));
+        } else {
+          setEditingAsset(prev => ({ ...prev, [name]: ['principal', 'valuation', 'target'].includes(name) ? Number(value) : value }));
+        }
+      };
+
+      const saveAssetFromModal = (e) => {
+        e.preventDefault();
+        const exists = assets.find(a => a.id === editingAsset.id);
+        if (exists) {
+          setAssets(assets.map(a => a.id === editingAsset.id ? editingAsset : a));
+        } else {
+          setAssets([...assets, editingAsset]);
+        }
+        setIsModalOpen(false);
+        setEditingAsset(null);
+      };
+
+      const exportToExcel = () => {
+        const dataToExport = assets.map(a => {
+          const profit = a.valuation - a.principal;
+          const roi = a.principal > 0 ? (profit / a.principal) * 100 : 0;
+          const ratio = globalTotals.valuation > 0 ? (a.valuation / globalTotals.valuation) * 100 : 0;
+          const row = {
+            "자산구분1": a.cat1, "자산구분2": a.cat2, "자산관리주관": a.manager,
+            "원금(원화)": a.principal, "평가액(원화)": a.valuation, "수익금(원화)": profit,
+            "수익률(%)": roi, "자산비율(%)": ratio, "목표비율(%)": a.target
+          };
+          customColumns.forEach(col => { row[col] = a.customFields?.[col] || ""; });
+          return row;
+        });
+        const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "자산현황");
+        XLSX.writeFile(workbook, `자산관리_${selectedDate}.xlsx`);
+      };
+
+      const importExcel = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const bstr = evt.target.result;
+          const workbook = XLSX.read(bstr, { type: 'binary' });
+          const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(worksheet);
+
+          const importedAssets = json.map((row, idx) => {
+            const asset = {
+              id: Date.now() + idx, cat1: row["자산구분1"] || "", cat2: row["자산구분2"] || "",
+              manager: row["자산관리주관"] || "", principal: Number(row["원금(원화)"] || 0),
+              valuation: Number(row["평가액(원화)"] || 0), target: Number(row["목표비율(%)"] || 0), customFields: {}
+            };
+            Object.keys(row).forEach(key => {
+              if (!["자산구분1", "자산구분2", "자산관리주관", "원금(원화)", "평가액(원화)", "수익금(원화)", "수익률(%)", "자산비율(%)", "목표비율(%)"].includes(key)) {
+                asset.customFields[key] = row[key];
+                if (!customColumns.includes(key)) setCustomColumns(prev => [...prev, key]);
+              }
+            });
+            return asset;
+          });
+          setAssets(importedAssets);
+        };
+        reader.readAsBinaryString(file);
+      };
+
+      const copyDashboardImage = () => {
+        const element = document.getElementById("dashboard-capture-area");
+        html2canvas(element, { useCORS: true, scale: 2 }).then(canvas => {
+          canvas.toBlob(blob => {
+            if (navigator.clipboard && navigator.clipboard.write) {
+              const item = new ClipboardItem({ "image/png": blob });
+              navigator.clipboard.write([item]).then(() => alert("이미지 복사 완료!"))
+                .catch(err => alert("복사 실패: 로컬 환경(file://)에서는 지원되지 않을 수 있습니다."));
+            }
+          }, "image/png");
+        }).catch(err => alert("화면 캡처 실패: 로컬 환경 보안 제한입니다."));
+      };
+
+      // [수정된 부분] setList를 명확히 매개변수로 받아 처리합니다.
+      const toggleFilter = (list, setList, val) => {
+        if (list.includes(val)) {
+          setList(list.filter(item => item !== val));
+        } else {
+          setList([...list, val]);
+        }
+      };
+
+      return (
+        <div class="max-w-7xl mx-auto p-3 md:p-6 pb-24" id="dashboard-capture-area">
+          <div class="bg-white p-4 rounded-xl shadow-sm border mb-6 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h1 class="text-xl md:text-2xl font-bold text-slate-800">Antigravity 자산 제어 센터</h1>
+              <p class="text-xs text-gray-500 mt-1">PC 와이드 테이블 & 모바일 슬라이드 폼 하이브리드 모드</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center gap-1">
+                <label class="text-xs font-bold text-gray-600">기준일자</label>
+                <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} class="border rounded-lg p-2 text-sm bg-gray-50 font-medium">
+                  <option value="2026-06-29">2026-06-29 (최신)</option>
+                  <option value="2026-05-31">2026-05-31 (과거)</option>
+                </select>
+              </div>
+              <div class="flex items-center gap-1">
+                <label class="text-xs font-bold text-gray-600">달러환율(₩)</label>
+                <input type="number" placeholder="예: 1350" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} class="w-24 border rounded-lg p-2 text-sm text-right bg-gray-50" />
+              </div>
+              <button onClick={saveToDB} class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-bold hover:bg-blue-700">업데이트 및 저장</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="bg-white p-4 rounded-xl shadow-sm border lg:col-span-2">
+              <h3 class="text-sm font-bold text-gray-700 mb-3">🧩 조건별 자산 다중 필터 요약</h3>
+              <div class="grid grid-cols-3 gap-2 mb-4 text-xs">
+                {/* [수정된 부분] toggleFilter 호출 시 두 번째 인자를 올바른 setter 함수로 교체했습니다. */}
+                <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
+                  <p class="font-bold border-b pb-1 mb-1 text-teal-700">자산구분1</p>
+                  {uniqueOptions.cat1s.map(c => (
+                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer">
+                      <input type="checkbox" checked={filterCat1.includes(c)} onChange={() => toggleFilter(filterCat1, setFilterCat1, c)} /> {c}
+                    </label>
+                  ))}
+                </div>
+                <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
+                  <p class="font-bold border-b pb-1 mb-1 text-teal-700">자산구분2</p>
+                  {uniqueOptions.cat2s.map(c => (
+                    <label key={c} class="flex items-center gap-1 my-1 cursor-pointer">
+                      <input type="checkbox" checked={filterCat2.includes(c)} onChange={() => toggleFilter(filterCat2, setFilterCat2, c)} /> {c}
+                    </label>
+                  ))}
+                </div>
+                <div class="border rounded-lg p-2 max-h-28 overflow-y-auto hide-scrollbar">
+                  <p class="font-bold border-b pb-1 mb-1 text-teal-700">관리주관</p>
+                  {uniqueOptions.managers.map(m => (
+                    <label key={m} class="flex items-center gap-1 my-1 cursor-pointer">
+                      <input type="checkbox" checked={filterManager.includes(m)} onChange={() => toggleFilter(filterManager, setFilterManager, m)} /> {m}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div class="bg-teal-50 p-3 rounded-lg flex justify-between items-center text-sm">
+                <div><span class="text-xs text-teal-700 font-bold bg-teal-100 px-2 py-0.5 rounded mr-2">선택 조건 합계</span><span class="font-bold text-slate-800">{formatKRW(filteredSummary.sumValuation)}</span></div>
+                <div class="text-right"><span class="text-xs text-gray-500">전체 대비 비중: </span><span class="font-bold text-teal-700">{formatPercent(filteredSummary.ratioOfTotal)}</span></div>
+              </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow-sm border flex flex-col justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-bold text-gray-700 mb-2">💾 외부 연동 및 출력</h3>
+                <div class="grid grid-cols-2 gap-2">
+                  <button onClick={exportToExcel} class="bg-emerald-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-emerald-700">📊 엑셀 내보내기</button>
+                  <label class="bg-amber-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-amber-700 flex items-center justify-center gap-1 cursor-pointer text-center">📥 엑셀 업로드<input type="file" accept=".xlsx, .xls" onChange={importExcel} class="hidden" /></label>
+                </div>
+              </div>
+              <button onClick={copyDashboardImage} class="w-full bg-indigo-600 text-white p-3 rounded-lg text-sm font-bold hover:bg-indigo-700 mt-2">📱 핸드폰 전송용 이미지 클립보드 복사</button>
+            </div>
+          </div>
+
+          <div class="bg-white p-4 rounded-xl shadow-sm border mb-6">
+            <h3 class="text-sm font-bold text-gray-700 mb-3">📈 자산 성장 추이 (원금 vs 평가액)</h3>
+            <div class="relative w-full h-48 bg-gray-50 rounded-lg p-2 flex items-end justify-around pt-6">
+              {Object.keys(db).sort().map(date => {
+                const dayAssets = db[date] || [];
+                let pSum = 0, vSum = 0;
+                dayAssets.forEach(a => { pSum += a.principal; vSum += a.valuation; });
+                const maxScale = 500000000;
+                const pHeight = Math.min(100, (pSum / maxScale) * 100);
+                const vHeight = Math.min(100, (vSum / maxScale) * 100);
+
+                return (
+                  <div key={date} class="flex flex-col items-center w-1/3 group cursor-pointer" onMouseEnter={() => setHoveredData({ date, pSum, vSum })} onMouseLeave={() => setHoveredData(null)}>
+                    <div class="flex items-end gap-2 w-full justify-center h-32 border-b pb-1">
+                      <div style={{ height: `${pHeight}%` }} class="w-4 bg-slate-400 rounded-t transition-all group-hover:bg-slate-500"></div>
+                      <div style={{ height: `${vHeight}%` }} class="w-4 bg-teal-500 rounded-t transition-all group-hover:bg-teal-600"></div>
+                    </div>
+                    <span class="text-xs font-medium text-gray-500 mt-1">{date.slice(5)}</span>
+                  </div>
+                );
+              })}
+              {hoveredData && (
+                <div class="absolute top-2 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-xs p-2 rounded shadow-lg z-10 space-y-0.5">
+                  <p class="font-bold border-b border-gray-600 pb-0.5 mb-1">{hoveredData.date}</p>
+                  <p>총 원금: {formatKRW(hoveredData.pSum)}</p>
+                  <p class="text-teal-300">총 평가액: {formatKRW(hoveredData.vSum)}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+              <h3 class="font-bold text-gray-700 text-sm">📋 실시간 종합 자산 시트</h3>
+              <button onClick={addColumn} class="bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-800">+ 열 추가</button>
+            </div>
+
+            <div class="hidden lg:block overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="bg-slate-100 border-b text-gray-600 font-semibold">
+                    <th class="p-3">자산구분1</th><th class="p-3">자산구분2</th><th class="p-3">관리주관</th>
+                    <th class="p-3 text-right">원금 (₩)</th>{usdRate > 0 && <th class="p-3 text-right bg-amber-50">원금 ($)</th>}
+                    <th class="p-3 text-right">평가액 (₩)</th>{usdRate > 0 && <th class="p-3 text-right bg-amber-50">평가액 ($)</th>}
+                    <th class="p-3 text-right">수익금</th><th class="p-3 text-right">수익률</th>
+                    <th class="p-3 text-right">현재비중</th><th class="p-3 text-right text-teal-700">목표비중</th>
+                    <th class="p-3 text-right text-indigo-700">리밸런싱금액</th>
+                    {customColumns.map(col => <th key={col} class="p-3 text-gray-500">{col}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {assets.map(a => {
+                    const profit = a.valuation - a.principal;
+                    const roi = a.principal > 0 ? (profit / a.principal) * 100 : 0;
+                    const ratio = globalTotals.valuation > 0 ? (a.valuation / globalTotals.valuation) * 100 : 0;
+                    const targetValuation = globalTotals.valuation * (a.target / 100);
+                    const rebalanceAmount = targetValuation - a.valuation;
+
+                    return (
+                      <tr key={a.id} class="border-b hover:bg-slate-50 cursor-pointer" onClick={() => openModal(a)}>
+                        <td class="p-3 font-medium">{a.cat1}</td><td class="p-3 text-gray-600">{a.cat2}</td><td class="p-3 text-gray-600">{a.manager}</td>
+                        <td class="p-3 text-right font-mono">{formatKRW(a.principal)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/50 text-amber-800">{formatUSD(a.principal)}</td>}
+                        <td class="p-3 text-right font-bold font-mono">{formatKRW(a.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono bg-amber-50/50 text-amber-800">{formatUSD(a.valuation)}</td>}
+                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-red-600'}`}>{formatKRW(profit)}</td>
+                        <td class={`p-3 text-right font-mono font-medium ${profit < 0 ? 'text-blue-600' : 'text-red-600'}`}>{formatPercent(roi)}</td>
+                        <td class="p-3 text-right font-mono text-gray-500">{formatPercent(ratio)}</td>
+                        <td class="p-3 text-right font-mono font-bold text-teal-600">{a.target}%</td>
+                        <td class={`p-3 text-right font-mono font-bold ${rebalanceAmount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {rebalanceAmount >= 0 ? `+${formatKRW(rebalanceAmount)}` : formatKRW(rebalanceAmount)}
+                        </td>
+                        {customColumns.map(col => <td key={col} class="p-3 text-gray-500 text-xs">{a.customFields?.[col] || "-"}</td>)}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr class="bg-slate-800 text-white font-bold">
+                    <td class="p-3" colSpan="3">합계</td>
+                    <td class="p-3 text-right font-mono">{formatKRW(globalTotals.principal)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono text-amber-300">{formatUSD(globalTotals.principal)}</td>}
+                    <td class="p-3 text-right font-mono">{formatKRW(globalTotals.valuation)}</td>{usdRate > 0 && <td class="p-3 text-right font-mono text-amber-300">{formatUSD(globalTotals.valuation)}</td>}
+                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-red-300'}`}>{formatKRW(globalTotals.profit)}</td>
+                    <td class={`p-3 text-right font-mono ${globalTotals.profit < 0 ? 'text-blue-300' : 'text-red-300'}`}>{formatPercent(globalTotals.roi)}</td>
+                    <td class="p-3 text-right font-mono">100%</td>
+                    <td class="p-3 text-right font-mono">{assets.reduce((sum, a) => sum + Number(a.target || 0), 0)}%</td><td class="p-3"></td>
+                    {customColumns.map(col => <td key={col}></td>)}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div class="lg:hidden divide-y divide-gray-100">
+              {assets.map(a => {
+                const profit = a.valuation - a.principal;
+                return (
+                  <div key={a.id} class="p-4 active:bg-gray-50 flex justify-between items-center transition-colors cursor-pointer" onClick={() => openModal(a)}>
+                    <div>
+                      <div class="flex items-center gap-2"><span class="font-bold text-slate-800 text-base">{a.cat1}</span><span class="text-xs bg-slate-100 text-gray-600 px-2 py-0.5 rounded">{a.cat2}</span></div>
+                      <p class="text-xs text-gray-400 mt-1">{a.manager} | 목표: {a.target}%</p>
+                    </div>
+                    <div class="text-right">
+                      <p class="font-bold text-slate-900">{formatKRW(a.valuation)}</p>
+                      <p class={`text-xs font-medium mt-0.5 ${profit < 0 ? 'text-blue-500' : 'text-red-500'}`}>{profit >= 0 ? "+" : ""}{formatPercent(a.principal > 0 ? (profit / a.principal) * 100 : 0)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              <div class="bg-slate-900 text-white p-4 sticky bottom-0 text-sm font-bold flex justify-between">
+                <span>총 평가액</span><span class="text-teal-400">{formatKRW(globalTotals.valuation)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex justify-end">
+            <button onClick={() => openModal()} class="w-full lg:w-auto bg-teal-600 text-white font-bold px-6 py-4 lg:py-2.5 rounded-xl lg:rounded-lg shadow hover:bg-teal-700 transition-colors">+ 새 자산 추가 등록</button>
+          </div>
+
+          {isModalOpen && editingAsset && (
+            <div class="fixed inset-0 z-50 flex items-end lg:items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity">
+              <div class="bg-white w-full lg:w-[480px] rounded-t-2xl lg:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-slide-up">
+                <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+                  <div>
+                    <h2 class="text-lg font-bold text-slate-800">{assets.some(a => a.id === editingAsset.id) ? "자산 상세 정보 편집" : "새로운 자산 추가"}</h2>
+                  </div>
+                  <button onClick={() => setIsModalOpen(false)} class="text-gray-400 hover:text-gray-600 p-2 text-2xl font-mono">&times;</button>
+                </div>
+                <form onSubmit={saveAssetFromModal} class="p-5 overflow-y-auto space-y-4 flex-1 text-sm hide-scrollbar">
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="block text-xs font-bold text-gray-500 mb-1">자산구분1 *</label><input required type="text" name="cat1" value={editingAsset.cat1} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
+                    <div><label class="block text-xs font-bold text-gray-500 mb-1">자산구분2</label><input type="text" name="cat2" value={editingAsset.cat2} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
+                  </div>
+                  <div><label class="block text-xs font-bold text-gray-500 mb-1">관리주관</label><input type="text" name="manager" value={editingAsset.manager} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 focus:bg-white outline-none" /></div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div><label class="block text-xs font-bold text-gray-500 mb-1">원금 (₩) *</label><input required type="number" name="principal" value={editingAsset.principal || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" /></div>
+                    <div><label class="block text-xs font-bold text-gray-500 mb-1">현재 평가액 (₩) *</label><input required type="number" name="valuation" value={editingAsset.valuation || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" /></div>
+                  </div>
+                  <div><label class="block text-xs font-bold text-gray-500 mb-1">목표 비율 (Target %)</label><input type="number" max="100" name="target" value={editingAsset.target || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 font-mono text-right outline-none" placeholder="0" /></div>
+                  
+                  {customColumns.length > 0 && (
+                    <div class="border-t pt-3 space-y-3">
+                      <p class="text-xs font-bold text-slate-400">추가 확장 열 항목</p>
+                      {customColumns.map(col => (
+                        <div key={col}><label class="block text-xs font-bold text-gray-600 mb-1">{col}</label><input type="text" name={`custom_${col}`} value={editingAsset.customFields?.[col] || ""} onChange={handleModalChange} class="w-full border rounded-xl p-3 bg-gray-50 outline-none" /></div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div class="bg-slate-50 border rounded-xl p-4 space-y-2.5 font-medium text-xs text-gray-600">
+                    <p class="text-xs font-bold text-slate-400 border-b pb-1 mb-2">📊 수치 계산 분석기</p>
+                    <div class="flex justify-between"><span>수익금/률</span><span class={`font-bold font-mono ${(editingAsset.valuation - editingAsset.principal) >= 0 ? 'text-red-600' : 'text-blue-600'}`}>{formatKRW(editingAsset.valuation - editingAsset.principal)} ({editingAsset.principal > 0 ? (((editingAsset.valuation - editingAsset.principal) / editingAsset.principal) * 100).toFixed(2) : 0}%)</span></div>
+                    <div class="flex justify-between border-t pt-2 mt-2"><span>리밸런싱 필요액</span><span class={`font-bold font-mono ${(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation) >= 0 ? "+" : ""}{formatKRW(globalTotals.valuation * (editingAsset.target / 100) - editingAsset.valuation)}</span></div>
+                  </div>
+
+                  <div class="pt-2">
+                    <button type="submit" class="w-full bg-teal-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-teal-700 active:bg-teal-800 transition-colors text-base">업데이트 및 저장</button>
+                    <button type="button" onClick={() => setIsModalOpen(false)} class="w-full text-gray-500 font-medium py-2.5 mt-1 text-center text-xs">입력 취소하고 돌아가기</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+  <style>
+    @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .animate-slide-up { animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+  </style>
+</body>
+</html>
